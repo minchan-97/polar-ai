@@ -132,110 +132,266 @@ st.markdown("""
 
 # ━━━ 섹션 1: 학습 / 로드 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with st.expander(
-    "⚙️ 설정 & 학습" +
-    (" ✅" if st.session_state.ready else " — 코퍼스를 로드하세요"),
+    "⚙️ 학습" +
+    (" ✅" if st.session_state.ready else " — 학습 방법을 선택하세요"),
     expanded=not st.session_state.ready,
 ):
-    # PKL 로드 (최우선)
-    st.markdown("**💾 저장된 AI 불러오기**")
-    pkl_up = st.file_uploader(
-        "PKL 파일", type=["pkl"], key="pkl_up",
+    # 학습 모드 선택
+    mode = st.radio(
+        "학습 방법",
+        ["📄 파일 코퍼스 (PDF/TXT/DOCX)",
+         "🌐 온라인 수집 코퍼스",
+         "💾 저장된 AI 불러오기"],
+        key="train_mode",
         label_visibility="collapsed",
-        help="이전에 저장한 pkl을 불러와요 (대화 이력 포함)")
-    if pkl_up:
-        st.session_state.pkl_bytes = pkl_up.read()
+    )
 
-    if st.session_state.pkl_bytes:
-        if st.button("📂 AI 불러오기", key="load_pkl"):
-            with st.spinner("복원 중..."):
+    # ── 모드 1: 파일 ────────────────────────────────────────
+    if mode == "📄 파일 코퍼스 (PDF/TXT/DOCX)":
+        corp_up = st.file_uploader(
+            "파일 업로드", type=["txt","pdf","docx"],
+            key="corp_up", label_visibility="collapsed")
+        if corp_up:
+            st.session_state.corpus_bytes = corp_up.read()
+            st.session_state.corpus_name  = corp_up.name
+
+        corp_text = st.text_area(
+            "또는 직접 입력", height=80,
+            placeholder="학습할 텍스트...",
+            label_visibility="collapsed", key="corp_text")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.session_state.epochs = st.select_slider(
+                "epochs", [5,10,15,20],
+                value=st.session_state.epochs)
+        with c2:
+            st.session_state.logp_thr = st.select_slider(
+                "임계값", [-15.0,-13.0,-11.5,-10.0,-8.0],
+                value=st.session_state.logp_thr)
+
+        if st.button("🚀 파일로 학습", use_container_width=True):
+            raw  = st.session_state.corpus_bytes
+            name = st.session_state.corpus_name.lower()
+            text = corp_text.strip()
+            if raw and not text:
                 try:
-                    core = PolarAICore.from_bytes(
-                        st.session_state.pkl_bytes)
-                    st.session_state.core  = core
-                    st.session_state.ready = True
-                    s = core.summary()
-                    st.success(
-                        f"✓ {s['극성 어휘']}어휘 | "
-                        f"대화 {s['전체 대화']}턴 로드")
-                    st.rerun()
+                    if name.endswith(".pdf"):
+                        import pypdf
+                        text = "\n".join(
+                            p.extract_text() or ""
+                            for p in pypdf.PdfReader(io.BytesIO(raw)).pages)
+                    elif name.endswith(".docx"):
+                        import docx
+                        text = "\n".join(
+                            p.text for p in
+                            docx.Document(io.BytesIO(raw)).paragraphs
+                            if p.text.strip())
+                    else:
+                        text = raw.decode("utf-8", errors="ignore")
                 except Exception as e:
-                    st.error(f"로드 실패: {e}")
+                    st.error(f"파일 읽기 실패: {e}"); text = ""
+            if not text:
+                st.warning("파일을 업로드하거나 텍스트를 입력하세요.")
+            else:
+                prog = st.progress(0)
+                def cb(pct, msg): prog.progress(pct)
+                with st.spinner("학습 중..."):
+                    try:
+                        core = PolarAICore()
+                        core.build(text,
+                                   epochs=st.session_state.epochs,
+                                   on_progress=cb)
+                        st.session_state.core  = core
+                        st.session_state.ready = True
+                        st.success("✓ 완료!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"학습 실패: {e}")
 
-    st.markdown("---")
+    # ── 모드 2: 온라인 수집 ─────────────────────────────────
+    elif mode == "🌐 온라인 수집 코퍼스":
+        if st.session_state.collector is None:
+            st.session_state.collector = CollectionPipeline()
+        col = st.session_state.collector
 
-    # 코퍼스 학습
-    st.markdown("**📚 새로 학습하기**")
-    corp_up = st.file_uploader(
-        "코퍼스 업로드",
-        type=["txt","pdf","docx"],
-        key="corp_up",
-        label_visibility="collapsed",
-    )
-    if corp_up:
-        st.session_state.corpus_bytes = corp_up.read()
-        st.session_state.corpus_name  = corp_up.name
+        src = st.radio("수집 방법", [
+            "🔍 Google 뉴스",
+            "📰 네이버 뉴스",
+            "📡 RSS 피드",
+            "🔗 URL 직접",
+            "✍️ 텍스트",
+        ], key="src_mode2", label_visibility="collapsed",
+           horizontal=True)
 
-    corp_text = st.text_area(
-        "또는 직접 입력",
-        height=100,
-        placeholder="학습할 텍스트를 여기에...",
-        label_visibility="collapsed",
-        key="corp_text",
-    )
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.session_state.epochs = st.select_slider(
-            "epochs", [5,10,15,20], value=st.session_state.epochs)
-    with c2:
-        st.session_state.logp_thr = st.select_slider(
-            "임계값", [-15.0,-13.0,-11.5,-10.0,-8.0],
-            value=st.session_state.logp_thr)
-
-    if st.button("🚀 학습 시작", key="train_btn"):
-        raw  = st.session_state.corpus_bytes
-        name = st.session_state.corpus_name.lower()
-        text = corp_text.strip()
-        if raw and not text:
-            try:
-                if name.endswith(".pdf"):
-                    import pypdf
-                    text = "\n".join(
-                        p.extract_text() or ""
-                        for p in pypdf.PdfReader(io.BytesIO(raw)).pages)
-                elif name.endswith(".docx"):
-                    import docx
-                    text = "\n".join(
-                        p.text for p in
-                        docx.Document(io.BytesIO(raw)).paragraphs
-                        if p.text.strip())
+        if src == "🔍 Google 뉴스":
+            gkw = st.text_input("검색어", key="gkw2",
+                                placeholder="검색어 입력 (제한 없음)")
+            g_max = st.slider("최대 기사", 3, 15, 5, key="g_max2")
+            if st.button("🔍 수집", use_container_width=True):
+                if gkw:
+                    with st.spinner(f"'{gkw}' Google 뉴스 수집..."):
+                        try:
+                            rss = RSSCollector()
+                            docs = rss.search_google_news(gkw, g_max)
+                            ok = [d for d in docs if d.status=="ok"]
+                            for d in ok:
+                                col.collected_docs.append(d)
+                                col.total_tokens += d.tokens
+                            st.success(f"✓ {len(ok)}개 ({sum(d.tokens for d in ok)}토큰)")
+                        except Exception as e:
+                            st.error(f"실패: {e}")
                 else:
-                    text = raw.decode("utf-8", errors="ignore")
-            except Exception as e:
-                st.error(f"파일 읽기 실패: {e}")
-                text = ""
+                    st.warning("검색어를 입력하세요.")
 
-        if not text:
-            st.warning("코퍼스를 입력하거나 업로드하세요.")
-        else:
-            prog = st.progress(0)
-            stat = st.empty()
-            def cb(pct, msg):
-                prog.progress(pct); stat.caption(msg)
-            with st.spinner("학습 중..."):
-                try:
-                    core = PolarAICore()
-                    core.build(text,
-                               epochs=st.session_state.epochs,
-                               on_progress=cb)
-                    st.session_state.core  = core
-                    st.session_state.ready = True
-                    st.session_state.pkl_bytes = None
-                    st.success("✓ 학습 완료!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"학습 실패: {e}")
-                    import traceback; st.code(traceback.format_exc())
+        elif src == "📰 네이버 뉴스":
+            nkw = st.text_input("검색어", key="nkw2",
+                                placeholder="검색어 (제한 없음)")
+            with st.expander("API 설정 (선택)", expanded=False):
+                st.session_state.naver_id = st.text_input(
+                    "Client ID", value=st.session_state.naver_id)
+                st.session_state.naver_secret = st.text_input(
+                    "Client Secret",
+                    value=st.session_state.naver_secret,
+                    type="password")
+                st.caption("없으면 네이버 섹션 RSS 사용")
+            n_max2 = st.slider("최대 기사", 3, 15, 5, key="n_max2")
+            if st.button("📰 수집", use_container_width=True):
+                if nkw:
+                    with st.spinner(f"'{nkw}' 네이버 수집..."):
+                        try:
+                            rss = RSSCollector()
+                            docs = rss.search_naver_news(
+                                nkw,
+                                client_id=st.session_state.naver_id,
+                                client_secret=st.session_state.naver_secret,
+                                max_items=n_max2)
+                            ok = [d for d in docs if d.status=="ok"]
+                            for d in ok:
+                                col.collected_docs.append(d)
+                                col.total_tokens += d.tokens
+                            st.success(f"✓ {len(ok)}개")
+                        except Exception as e:
+                            st.error(f"실패: {e}")
+
+        elif src == "📡 RSS 피드":
+            from online_collector import RSSCollector as _RC
+            _presets = _RC.DEFAULT_FEEDS if hasattr(_RC,'DEFAULT_FEEDS') else {}
+            preset_list = ["직접 입력"] + list(
+                RSSCollector.DEFAULT_FEEDS.keys())
+            sel = st.selectbox("프리셋", preset_list, key="rss_sel2")
+            rss_url2 = st.text_input(
+                "RSS URL",
+                value=RSSCollector.DEFAULT_FEEDS.get(sel,"")
+                      if sel != "직접 입력" else "",
+                key="rss_url2")
+            r_max2 = st.slider("최대 기사", 3, 20, 8, key="r_max2")
+            if st.button("📡 RSS 수집", use_container_width=True):
+                if rss_url2:
+                    with st.spinner("RSS 수집 중..."):
+                        try:
+                            rss_col = RSSCollector()
+                            docs = rss_col.collect_feed(rss_url2, r_max2)
+                            ok = [d for d in docs if d.status=="ok"]
+                            for d in ok:
+                                col.collected_docs.append(d)
+                                col.total_tokens += d.tokens
+                            st.success(f"✓ {len(ok)}/{len(docs)}개")
+                        except Exception as e:
+                            st.error(f"실패: {e}")
+
+        elif src == "🔗 URL 직접":
+            urls_txt = st.text_area("URL 목록", height=80,
+                                    key="urls2",
+                                    placeholder="https://...")
+            if st.button("📥 수집", use_container_width=True):
+                urls = [u.strip() for u in urls_txt.split("\n")
+                        if u.strip().startswith("http")]
+                if urls:
+                    prog2 = st.progress(0)
+                    for i, url in enumerate(urls):
+                        doc = col.collect_url(url)
+                        prog2.progress((i+1)/len(urls))
+                        st.caption(f"{'✓' if doc.status=='ok' else '✗'} {url[:40]}")
+                else:
+                    st.warning("URL을 입력하세요.")
+
+        elif src == "✍️ 텍스트":
+            dtxt = st.text_area("텍스트", height=100, key="dtxt2",
+                                placeholder="직접 입력...")
+            if st.button("➕ 추가", use_container_width=True):
+                if dtxt.strip():
+                    doc = col.collect_text(dtxt)
+                    st.success(f"✓ {doc.tokens}토큰")
+
+        # 수집 현황
+        s_col = col.summary()
+        c1,c2 = st.columns(2)
+        c1.metric("수집 문서", s_col["성공"])
+        c2.metric("총 토큰",   s_col["총 토큰"])
+
+        if col.collected_docs:
+            with st.expander(f"목록 ({len(col.collected_docs)}개)"):
+                for d in col.collected_docs[-10:]:
+                    st.caption(
+                        f"{'✅' if d.status=='ok' else '❌'} "
+                        f"{d.title[:40]} ({d.tokens}토큰)")
+            ca, cb2 = st.columns(2)
+            with ca:
+                ep2 = st.select_slider("epochs", [5,10,15,20],
+                                       value=10, key="ep2")
+            with cb2:
+                st.session_state.logp_thr = st.select_slider(
+                    "임계값",
+                    [-15.0,-13.0,-11.5,-10.0,-8.0],
+                    value=st.session_state.logp_thr,
+                    key="thr2")
+            c1,c2 = st.columns(2)
+            with c1:
+                if st.button("🚀 수집 내용으로 학습",
+                             use_container_width=True):
+                    corpus = col.get_merged_corpus()
+                    if corpus.strip():
+                        prog3 = st.progress(0)
+                        def cb3(p,m): prog3.progress(p)
+                        with st.spinner("학습 중..."):
+                            core2 = PolarAICore()
+                            core2.build(corpus, epochs=ep2,
+                                        on_progress=cb3)
+                            st.session_state.core  = core2
+                            st.session_state.ready = True
+                        st.success("✓ 완료!")
+                        st.rerun()
+            with c2:
+                if st.button("🗑️ 초기화",
+                             use_container_width=True,
+                             key="col_clr2"):
+                    col.clear(); st.rerun()
+
+    # ── 모드 3: PKL 불러오기 ─────────────────────────────────
+    else:
+        pkl_up = st.file_uploader(
+            "PKL 파일", type=["pkl"], key="pkl_up",
+            label_visibility="collapsed")
+        if pkl_up:
+            st.session_state.pkl_bytes = pkl_up.read()
+
+        if st.session_state.pkl_bytes:
+            if st.button("📂 AI 불러오기",
+                         use_container_width=True, key="load2"):
+                with st.spinner("복원 중..."):
+                    try:
+                        core = PolarAICore.from_bytes(
+                            st.session_state.pkl_bytes)
+                        st.session_state.core  = core
+                        st.session_state.ready = True
+                        s2 = core.summary()
+                        st.success(
+                            f"✓ {s2['극성 어휘']}어휘 | "
+                            f"대화 {s2['전체 대화']}턴")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"실패: {e}")
 
 # ━━━ 학습 전 스탑 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 if not st.session_state.ready:
@@ -347,8 +503,74 @@ if hasattr(st.session_state, "_last_xai") and st.session_state._last_xai:
     st.session_state._last_xai = ""
 
 
-# ━━━ 섹션 5: 온라인 수집 + 자동학습 ━━━━━━━━━━━━━━━━━━━━━━━━
-with st.expander("🌐 온라인 수집 + 자동학습", expanded=False):
+# ━━━ 섹션 5: SOM 자동학습 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with st.expander("🤖 SOM 자동학습", expanded=False):
+    if not st.session_state.ready:
+        st.info("먼저 코퍼스를 학습하세요.")
+    else:
+        core = get_core()
+        st.caption("SOM 의미 지도 → 클러스터 선택 → 시간 설정 → 자동 반복 학습")
+
+        dur_min = st.slider("학습 시간(분)", 1, 20, 5, key="auto_dur")
+        api_at  = st.text_input("OpenAI Key (선택)", type="password",
+                                key="auto_key",
+                                help="없으면 패턴 기반 자동 생성")
+        ca, cb_som = st.columns(2)
+        with ca:
+            if st.button("🗺️ SOM 빌드", use_container_width=True,
+                         disabled=len(core.polar.word_vecs)<5):
+                with st.spinner("SOM 빌드 중..."):
+                    sb = SOMBuilder(grid=6)
+                    ok = sb.build_from_engine(core.polar)
+                if ok:
+                    st.session_state.som_builder = sb
+                    st.success(f"✓ {len(sb.neuron_data)}클러스터")
+                else:
+                    st.warning("어휘 부족")
+
+        with cb_som:
+            sb = st.session_state.som_builder
+            if sb and sb.neuron_data:
+                sel_n = st.number_input(
+                    "뉴런 번호", 0, sb.grid*sb.grid-1, 0,
+                    key="sel_n_auto")
+                if sel_n in sb.neuron_data:
+                    words = [it["word"]
+                             for it in sb.neuron_data[sel_n][:4]]
+                    st.caption(f"📍 {', '.join(words)}")
+
+        sb = st.session_state.som_builder
+        if sb and sb.neuron_data and not st.session_state.training_active:
+            if st.button(f"⚡ 자동학습 시작 ({dur_min}분)",
+                         use_container_width=True):
+                st.session_state.training_active = True
+                sel_n = st.session_state.get("sel_n_auto", 0)
+                trainer = AutoTrainer(core.polar, sb,
+                                      duration_sec=dur_min*60)
+                st.session_state.trainer = trainer
+                trainer.start_time = time.time()
+
+                prog_a = st.progress(0)
+                stat_a = st.empty()
+                while trainer.remaining() > 0:
+                    r = trainer.train_round(
+                        sel_n, api_key=api_at, epochs_per_round=2)
+                    prog_a.progress(min(trainer.progress(),1.0))
+                    stat_a.caption(
+                        f"라운드 {trainer.rounds_done} | "
+                        f"+{r['new_words']}어휘 | "
+                        f"남은 {trainer.remaining():.0f}초")
+                    if trainer.rounds_done % 5 == 0:
+                        sb.build_from_engine(core.polar)
+
+                st.session_state.training_active = False
+                st.success(
+                    f"✅ {trainer.rounds_done}라운드 완료 | "
+                    f"+{trainer.words_added}어휘")
+                st.rerun()
+
+
+# ━━━ 섹션 6: 저장 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     # collector 초기화
     if st.session_state.collector is None:
@@ -521,74 +743,6 @@ with st.expander("🌐 온라인 수집 + 자동학습", expanded=False):
     if st.button("🗑️ 수집 초기화", use_container_width=True,
                  key="col_clear"):
         col.clear(); st.rerun()
-
-    # ── 자동학습 (SOM 기반) ───────────────────────────────────
-    st.markdown("---")
-    st.markdown("**🤖 SOM 자동학습**")
-    st.caption("의미 지도 빌드 → 클러스터 선택 → 시간 설정 → 자동 반복 학습")
-
-    if not st.session_state.ready:
-        st.info("먼저 코퍼스를 학습하세요.")
-    else:
-        dur_min = st.slider("학습 시간(분)", 1, 20, 5, key="auto_dur")
-        api_at  = st.text_input("OpenAI Key (선택)", type="password",
-                                key="auto_key",
-                                help="없으면 패턴 기반 자동 생성")
-
-        ca, cb2 = st.columns(2)
-        with ca:
-            if st.button("🗺️ SOM 빌드", use_container_width=True,
-                         disabled=len(core.polar.word_vecs)<5):
-                with st.spinner("SOM 빌드 중..."):
-                    sb = SOMBuilder(grid=6)
-                    ok = sb.build_from_engine(core.polar)
-                if ok:
-                    st.session_state.som_builder = sb
-                    st.success(f"✓ {len(sb.neuron_data)}클러스터")
-                else:
-                    st.warning("어휘 부족 — 먼저 학습하세요.")
-
-        with cb2:
-            sb = st.session_state.som_builder
-            if sb and sb.neuron_data:
-                sel_n = st.number_input(
-                    "뉴런", 0, sb.grid*sb.grid-1, 0,
-                    key="sel_n_auto")
-                if sel_n in sb.neuron_data:
-                    words = [it["word"]
-                             for it in sb.neuron_data[sel_n][:4]]
-                    st.caption(f"클러스터: {', '.join(words)}")
-
-        sb = st.session_state.som_builder
-        if sb and sb.neuron_data and not st.session_state.training_active:
-            sel_n = st.session_state.get("sel_n_auto", 0)
-            if st.button(f"⚡ 자동학습 시작 ({dur_min}분)",
-                         use_container_width=True):
-                st.session_state.training_active = True
-                trainer = AutoTrainer(core.polar, sb,
-                                      duration_sec=dur_min*60)
-                st.session_state.trainer = trainer
-                trainer.start_time = time.time()
-
-                prog2 = st.progress(0)
-                stat2 = st.empty()
-                while trainer.remaining() > 0:
-                    r = trainer.train_round(
-                        sel_n, api_key=api_at, epochs_per_round=2)
-                    prog2.progress(min(trainer.progress(),1.0))
-                    stat2.caption(
-                        f"라운드 {trainer.rounds_done} | "
-                        f"+{r['new_words']}어휘 | "
-                        f"남은: {trainer.remaining():.0f}초")
-                    if trainer.rounds_done % 5 == 0:
-                        sb.build_from_engine(core.polar)
-
-                st.session_state.training_active = False
-                st.success(
-                    f"✅ {trainer.rounds_done}라운드 완료 | "
-                    f"+{trainer.words_added}어휘")
-                st.rerun()
-
 
 # ━━━ 섹션 6: 저장 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 st.markdown("---")
