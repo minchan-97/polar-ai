@@ -234,30 +234,76 @@ class RSSCollector:
 
     def collect_feed(self, feed_url: str,
                      max_items: int = 10) -> list[CollectedDoc]:
-        """RSS 피드에서 기사 목록 수집"""
+        """
+        RSS 피드 수집
+        1차: description 텍스트 직접 사용 (URL 방문 없음)
+        2차: URL 방문해서 전체 본문 (선택)
+        """
         docs = []
         try:
             req = urllib.request.Request(
-                feed_url,
-                headers=URLCollector.HEADERS)
+                feed_url, headers=URLCollector.HEADERS)
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 xml = resp.read().decode('utf-8', errors='ignore')
 
-            # item/link 파싱
-            links = re.findall(r'<link[^>]*>([^<]+)</link>', xml)
-            titles= re.findall(r'<title[^>]*><!\[CDATA\[([^\]]+)\]\]></title>',xml)
+            # title 파싱
+            titles = re.findall(
+                r'<title[^>]*><!\[CDATA\[([^\]]+)\]\]></title>', xml)
             if not titles:
-                titles = re.findall(r'<title[^>]*>([^<]+)</title>', xml)
+                titles = re.findall(r'<title[^>]*>([^<]{3,100})</title>', xml)
 
-            for i, link in enumerate(links[:max_items]):
-                link = link.strip()
-                if not link.startswith('http'): continue
-                doc = self.url_col.collect(link)
-                if i < len(titles):
-                    doc.title = titles[i][:80]
-                if doc.status == "ok" and doc.tokens > 30:
+            # description 파싱 (핵심 변경)
+            descs = re.findall(
+                r'<description[^>]*><!\[CDATA\[(.*?)\]\]></description>',
+                xml, re.DOTALL)
+            if not descs:
+                descs = re.findall(
+                    r'<description[^>]*>(.*?)</description>',
+                    xml, re.DOTALL)
+            if not descs:
+                descs = re.findall(
+                    r'<summary[^>]*>(.*?)</summary>',
+                    xml, re.DOTALL)
+
+            # link 파싱
+            links = re.findall(r'<link[^>]*>([^<]+)</link>', xml)
+            if not links:
+                links = re.findall(r'href=["\']([^"\']+)["\']', xml)
+
+            count = max(len(titles), len(descs), len(links))
+
+            for i in range(min(count, max_items)):
+                title = titles[i].strip() if i < len(titles) else ""
+                desc  = descs[i].strip()  if i < len(descs)  else ""
+                link  = links[i].strip()  if i < len(links)  else ""
+
+                # description HTML 정제
+                desc_text = self.cleaner.clean_html(desc)
+                sents     = self.cleaner.extract_sentences(desc_text,
+                                                           min_len=8)
+                # title도 문장으로 추가
+                if title and len(title) > 5:
+                    sents.insert(0, title)
+
+                corpus = self.cleaner.to_corpus(sents)
+
+                if len(corpus.split()) >= 3:   # description만으로 충분
+                    doc = CollectedDoc(
+                        source=link or feed_url,
+                        title=title[:80],
+                        text=corpus,
+                        tokens=len(corpus.split()),
+                        sentences=len(sents),
+                    )
                     docs.append(doc)
-                time.sleep(0.3)  # 서버 부하 방지
+                elif link and link.startswith('http'):
+                    # description 짧을 때만 URL 방문
+                    doc = self.url_col.collect(link)
+                    if doc.status == "ok" and doc.tokens > 20:
+                        if title: doc.title = title
+                        docs.append(doc)
+                    time.sleep(0.2)
+
         except Exception as e:
             docs.append(CollectedDoc(
                 source=feed_url, status="error", error=str(e)[:80]))
