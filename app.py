@@ -170,7 +170,7 @@ with st.expander(
                 "임계값", [-15.0,-13.0,-11.5,-10.0,-8.0],
                 value=st.session_state.logp_thr)
 
-        if st.button("🚀 파일로 학습", use_container_width=True):
+        if st.button("🚀 파일로 학습", use_container_width=True, key="btn_file_train"):
             raw  = st.session_state.corpus_bytes
             name = st.session_state.corpus_name.lower()
             text = corp_text.strip()
@@ -319,7 +319,7 @@ with st.expander(
         elif src == "✍️ 텍스트":
             dtxt = st.text_area("텍스트", height=100, key="dtxt2",
                                 placeholder="직접 입력...")
-            if st.button("➕ 추가", use_container_width=True):
+            if st.button("➕ 추가", use_container_width=True, key="btn_dtxt2_add"):
                 if dtxt.strip():
                     doc = col.collect_text(dtxt)
                     st.success(f"✓ {doc.tokens}토큰")
@@ -365,7 +365,7 @@ with st.expander(
             with c2:
                 if st.button("🗑️ 초기화",
                              use_container_width=True,
-                             key="col_clr2"):
+                             key="btn_col_clr2"):
                     col.clear(); st.rerun()
 
     # ── 모드 3: PKL 불러오기 ─────────────────────────────────
@@ -378,7 +378,7 @@ with st.expander(
 
         if st.session_state.pkl_bytes:
             if st.button("📂 AI 불러오기",
-                         use_container_width=True, key="load2"):
+                         use_container_width=True, key="btn_load2"):
                 with st.spinner("복원 중..."):
                     try:
                         core = PolarAICore.from_bytes(
@@ -517,7 +517,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
                                 help="없으면 패턴 기반 자동 생성")
         ca, cb_som = st.columns(2)
         with ca:
-            if st.button("🗺️ SOM 빌드", use_container_width=True,
+            if st.button("🗺️ SOM 빌드", use_container_width=True, key="btn_som_build",
                          disabled=len(core.polar.word_vecs)<5):
                 with st.spinner("SOM 빌드 중..."):
                     sb = SOMBuilder(grid=6)
@@ -542,7 +542,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
         sb = st.session_state.som_builder
         if sb and sb.neuron_data and not st.session_state.training_active:
             if st.button(f"⚡ 자동학습 시작 ({dur_min}분)",
-                         use_container_width=True):
+                         use_container_width=True, key="btn_auto_train"):
                 st.session_state.training_active = True
                 sel_n = st.session_state.get("sel_n_auto", 0)
                 trainer = AutoTrainer(core.polar, sb,
@@ -591,7 +591,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
         gkw = st.text_input("검색어", placeholder="교육과정 AI 활용",
                             key="gkw")
         g_max = st.slider("최대 기사", 3, 10, 5, key="g_max")
-        if st.button("🔍 Google 뉴스 수집", use_container_width=True):
+        if st.button("🔍 Google 뉴스 수집", use_container_width=True, key="btn_gnews"):
             if gkw:
                 with st.spinner(f"Google 뉴스 '{gkw}' 검색 중..."):
                     try:
@@ -622,7 +622,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
                 type="password", key="nav_sec")
             st.caption("없으면 네이버 뉴스 섹션 RSS 사용")
         n_max = st.slider("최대 기사", 3, 10, 5, key="n_max")
-        if st.button("📰 네이버 뉴스 수집", use_container_width=True):
+        if st.button("📰 네이버 뉴스 수집", use_container_width=True, key="btn_nnews"):
             if nkw:
                 with st.spinner(f"네이버 '{nkw}' 검색 중..."):
                     try:
@@ -667,7 +667,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
         rss_url = st.text_input("RSS URL",
                                 value=rss_presets[preset], key="rss_url")
         r_max   = st.slider("최대 기사", 3, 15, 5, key="r_max")
-        if st.button("📡 RSS 수집", use_container_width=True):
+        if st.button("📡 RSS 수집", use_container_width=True, key="btn_rss1"):
             if rss_url:
                 with st.spinner("RSS 수집 중..."):
                     try:
@@ -688,7 +688,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
         urls_input = st.text_area("URL (줄마다 하나)",
                                   height=80, key="urls_direct",
                                   placeholder="https://example.com")
-        if st.button("📥 수집", use_container_width=True):
+        if st.button("📥 수집", use_container_width=True, key="btn_url1"):
             urls = [u.strip() for u in urls_input.split("\n")
                     if u.strip().startswith("http")]
             if urls:
@@ -729,6 +729,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
 
     if st.button("🚀 수집 내용으로 학습",
                  use_container_width=True,
+                 key="btn_col_train2",
                  disabled=s_col["성공"]==0):
         corpus = col.get_merged_corpus()
         if corpus.strip():
@@ -741,7 +742,7 @@ with st.expander("🤖 SOM 자동학습", expanded=False):
             st.rerun()
 
     if st.button("🗑️ 수집 초기화", use_container_width=True,
-                 key="col_clear"):
+                 key="btn_col_clear"):
         col.clear(); st.rerun()
 
 # ━━━ 섹션 6: 저장 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
