@@ -86,6 +86,8 @@ hr{border-color:var(--bd)!important;}
 
 try:
     from core import PolarAICore
+    from online_collector import CollectionPipeline, RSSCollector
+    from auto_train import SOMBuilder, AutoTrainer
     CORE_OK = True
 except Exception as e:
     CORE_OK = False
@@ -101,6 +103,12 @@ for k,v in {
     "pkl_bytes":    None,
     "logp_thr":     -11.5,
     "epochs":       20,
+    "collector":    None,
+    "som_builder":  None,
+    "trainer":      None,
+    "training_active": False,
+    "naver_id":     "",
+    "naver_secret": "",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -339,7 +347,250 @@ if hasattr(st.session_state, "_last_xai") and st.session_state._last_xai:
     st.session_state._last_xai = ""
 
 
-# ━━━ 섹션 5: 저장 (모바일 호환) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ 섹션 5: 온라인 수집 + 자동학습 ━━━━━━━━━━━━━━━━━━━━━━━━
+with st.expander("🌐 온라인 수집 + 자동학습", expanded=False):
+
+    # collector 초기화
+    if st.session_state.collector is None:
+        st.session_state.collector = CollectionPipeline()
+    col = st.session_state.collector
+
+    st.markdown("**수집 방법 선택**")
+    src = st.radio("", [
+        "🔍 Google 뉴스 검색",
+        "📰 네이버 뉴스 검색",
+        "📡 RSS 피드",
+        "🔗 URL 직접",
+        "✍️ 텍스트 입력",
+    ], key="src_radio", label_visibility="collapsed")
+
+    # ── Google 뉴스 ──────────────────────────────────────────
+    if src == "🔍 Google 뉴스 검색":
+        gkw = st.text_input("검색어", placeholder="교육과정 AI 활용",
+                            key="gkw")
+        g_max = st.slider("최대 기사", 3, 10, 5, key="g_max")
+        if st.button("🔍 Google 뉴스 수집", use_container_width=True):
+            if gkw:
+                with st.spinner(f"Google 뉴스 '{gkw}' 검색 중..."):
+                    try:
+                        rss = RSSCollector()
+                        docs = rss.search_google_news(gkw, g_max)
+                        ok = [d for d in docs if d.status=="ok"]
+                        for d in ok:
+                            col.collected_docs.append(d)
+                            col.total_tokens += d.tokens
+                        st.success(f"✓ {len(ok)}개 수집 ({sum(d.tokens for d in ok)}토큰)")
+                        for d in ok[:3]:
+                            st.caption(f"  • {d.title[:45]}")
+                    except Exception as e:
+                        st.error(f"수집 실패: {e}")
+            else:
+                st.warning("검색어를 입력하세요.")
+
+    # ── 네이버 뉴스 ──────────────────────────────────────────
+    elif src == "📰 네이버 뉴스 검색":
+        nkw = st.text_input("검색어", placeholder="교육 AI",
+                            key="nkw")
+        with st.expander("네이버 API 설정 (선택)", expanded=False):
+            st.session_state.naver_id     = st.text_input(
+                "Client ID", value=st.session_state.naver_id, key="nav_id")
+            st.session_state.naver_secret = st.text_input(
+                "Client Secret",
+                value=st.session_state.naver_secret,
+                type="password", key="nav_sec")
+            st.caption("없으면 네이버 뉴스 섹션 RSS 사용")
+        n_max = st.slider("최대 기사", 3, 10, 5, key="n_max")
+        if st.button("📰 네이버 뉴스 수집", use_container_width=True):
+            if nkw:
+                with st.spinner(f"네이버 '{nkw}' 검색 중..."):
+                    try:
+                        rss = RSSCollector()
+                        docs = rss.search_naver_news(
+                            nkw,
+                            client_id=st.session_state.naver_id,
+                            client_secret=st.session_state.naver_secret,
+                            max_items=n_max,
+                        )
+                        ok = [d for d in docs if d.status=="ok"]
+                        for d in ok:
+                            col.collected_docs.append(d)
+                            col.total_tokens += d.tokens
+                        st.success(f"✓ {len(ok)}개 수집")
+                        for d in ok[:3]:
+                            st.caption(f"  • {d.title[:45]}")
+                    except Exception as e:
+                        st.error(f"수집 실패: {e}")
+            else:
+                st.warning("검색어를 입력하세요.")
+
+    # ── RSS 피드 ─────────────────────────────────────────────
+    elif src == "📡 RSS 피드":
+        rss_presets = {
+            "직접 입력": "",
+            "Google 뉴스 교육":
+                "https://news.google.com/rss/search?q=교육&hl=ko&gl=KR&ceid=KR:ko",
+            "Google 뉴스 AI":
+                "https://news.google.com/rss/search?q=인공지능&hl=ko&gl=KR&ceid=KR:ko",
+            "네이버 교육":
+                "https://news.naver.com/rss/section_083.xml",
+            "네이버 IT과학":
+                "https://news.naver.com/rss/section_105.xml",
+            "연합뉴스 교육":
+                "https://www.yonhapnews.co.kr/RSS/education.xml",
+            "위키백과 최근변경":
+                "https://ko.wikipedia.org/w/api.php?action=feedrecentchanges&lang=ko&feedformat=rss",
+        }
+        preset  = st.selectbox("프리셋", list(rss_presets.keys()),
+                               key="rss_preset")
+        rss_url = st.text_input("RSS URL",
+                                value=rss_presets[preset], key="rss_url")
+        r_max   = st.slider("최대 기사", 3, 15, 5, key="r_max")
+        if st.button("📡 RSS 수집", use_container_width=True):
+            if rss_url:
+                with st.spinner("RSS 수집 중..."):
+                    try:
+                        rss_col = RSSCollector()
+                        docs = rss_col.collect_feed(rss_url, r_max)
+                        ok = [d for d in docs if d.status=="ok"]
+                        for d in ok:
+                            col.collected_docs.append(d)
+                            col.total_tokens += d.tokens
+                        st.success(f"✓ {len(ok)}/{len(docs)}개 수집")
+                    except Exception as e:
+                        st.error(f"RSS 실패: {e}")
+            else:
+                st.warning("URL을 입력하세요.")
+
+    # ── URL 직접 ─────────────────────────────────────────────
+    elif src == "🔗 URL 직접":
+        urls_input = st.text_area("URL (줄마다 하나)",
+                                  height=80, key="urls_direct",
+                                  placeholder="https://example.com")
+        if st.button("📥 수집", use_container_width=True):
+            urls = [u.strip() for u in urls_input.split("\n")
+                    if u.strip().startswith("http")]
+            if urls:
+                prog = st.progress(0)
+                for i, url in enumerate(urls):
+                    doc = col.collect_url(url)
+                    prog.progress((i+1)/len(urls))
+                    icon = "✓" if doc.status=="ok" else "✗"
+                    st.caption(f"{icon} {url[:40]} ({doc.tokens}토큰)")
+            else:
+                st.warning("URL을 입력하세요.")
+
+    # ── 텍스트 직접 ──────────────────────────────────────────
+    elif src == "✍️ 텍스트 입력":
+        direct = st.text_area("텍스트", height=100, key="direct_txt",
+                              placeholder="직접 입력할 텍스트...")
+        if st.button("➕ 추가", use_container_width=True):
+            if direct.strip():
+                doc = col.collect_text(direct, "직접입력")
+                st.success(f"✓ {doc.tokens}토큰 추가")
+
+    # ── 수집 현황 + 학습 ─────────────────────────────────────
+    st.markdown("---")
+    s_col = col.summary()
+    c1,c2,c3 = st.columns(3)
+    c1.metric("수집 문서", s_col["성공"])
+    c2.metric("총 토큰",   s_col["총 토큰"])
+    c3.metric("총 문장",   s_col["총 문장"])
+
+    if col.collected_docs:
+        with st.expander(f"수집 목록 ({len(col.collected_docs)}개)"):
+            for d in col.collected_docs:
+                icon = "✅" if d.status=="ok" else "❌"
+                st.caption(f"{icon} {d.title[:40]} ({d.tokens}토큰)")
+
+    ep_col = st.select_slider("학습 강도", [5,10,15,20], value=10,
+                              key="ep_col")
+
+    if st.button("🚀 수집 내용으로 학습",
+                 use_container_width=True,
+                 disabled=s_col["성공"]==0):
+        corpus = col.get_merged_corpus()
+        if corpus.strip():
+            prog = st.progress(0)
+            def cb2(pct,msg): prog.progress(pct)
+            with st.spinner("수집 코퍼스 학습 중..."):
+                core.build(corpus, epochs=ep_col, on_progress=cb2)
+                st.session_state.ready = True
+            st.success(f"✓ 완료! 어휘 {len(core.polar.word_vecs)}개")
+            st.rerun()
+
+    if st.button("🗑️ 수집 초기화", use_container_width=True,
+                 key="col_clear"):
+        col.clear(); st.rerun()
+
+    # ── 자동학습 (SOM 기반) ───────────────────────────────────
+    st.markdown("---")
+    st.markdown("**🤖 SOM 자동학습**")
+    st.caption("의미 지도 빌드 → 클러스터 선택 → 시간 설정 → 자동 반복 학습")
+
+    if not st.session_state.ready:
+        st.info("먼저 코퍼스를 학습하세요.")
+    else:
+        dur_min = st.slider("학습 시간(분)", 1, 20, 5, key="auto_dur")
+        api_at  = st.text_input("OpenAI Key (선택)", type="password",
+                                key="auto_key",
+                                help="없으면 패턴 기반 자동 생성")
+
+        ca, cb2 = st.columns(2)
+        with ca:
+            if st.button("🗺️ SOM 빌드", use_container_width=True,
+                         disabled=len(core.polar.word_vecs)<5):
+                with st.spinner("SOM 빌드 중..."):
+                    sb = SOMBuilder(grid=6)
+                    ok = sb.build_from_engine(core.polar)
+                if ok:
+                    st.session_state.som_builder = sb
+                    st.success(f"✓ {len(sb.neuron_data)}클러스터")
+                else:
+                    st.warning("어휘 부족 — 먼저 학습하세요.")
+
+        with cb2:
+            sb = st.session_state.som_builder
+            if sb and sb.neuron_data:
+                sel_n = st.number_input(
+                    "뉴런", 0, sb.grid*sb.grid-1, 0,
+                    key="sel_n_auto")
+                if sel_n in sb.neuron_data:
+                    words = [it["word"]
+                             for it in sb.neuron_data[sel_n][:4]]
+                    st.caption(f"클러스터: {', '.join(words)}")
+
+        sb = st.session_state.som_builder
+        if sb and sb.neuron_data and not st.session_state.training_active:
+            sel_n = st.session_state.get("sel_n_auto", 0)
+            if st.button(f"⚡ 자동학습 시작 ({dur_min}분)",
+                         use_container_width=True):
+                st.session_state.training_active = True
+                trainer = AutoTrainer(core.polar, sb,
+                                      duration_sec=dur_min*60)
+                st.session_state.trainer = trainer
+                trainer.start_time = time.time()
+
+                prog2 = st.progress(0)
+                stat2 = st.empty()
+                while trainer.remaining() > 0:
+                    r = trainer.train_round(
+                        sel_n, api_key=api_at, epochs_per_round=2)
+                    prog2.progress(min(trainer.progress(),1.0))
+                    stat2.caption(
+                        f"라운드 {trainer.rounds_done} | "
+                        f"+{r['new_words']}어휘 | "
+                        f"남은: {trainer.remaining():.0f}초")
+                    if trainer.rounds_done % 5 == 0:
+                        sb.build_from_engine(core.polar)
+
+                st.session_state.training_active = False
+                st.success(
+                    f"✅ {trainer.rounds_done}라운드 완료 | "
+                    f"+{trainer.words_added}어휘")
+                st.rerun()
+
+
+# ━━━ 섹션 6: 저장 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 st.markdown("---")
 with st.expander("💾 저장 / 내보내기", expanded=False):
     st.caption(
