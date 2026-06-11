@@ -136,18 +136,50 @@ class RSSCollector:
     NAVER_NEWS_RSS  = "https://openapi.naver.com/v1/search/news.xml?query={query}&display=10"
 
     DEFAULT_FEEDS = {
+        # ── 한국 종합 ──────────────────────────────────────
+        "연합뉴스 전체":
+            "https://www.yonhapnews.co.kr/RSS/headline.xml",
         "연합뉴스 교육":
             "https://www.yonhapnews.co.kr/RSS/education.xml",
-        "Google 뉴스 (교육)":
-            "https://news.google.com/rss/search?q=교육&hl=ko&gl=KR&ceid=KR:ko",
-        "Google 뉴스 (AI)":
-            "https://news.google.com/rss/search?q=인공지능&hl=ko&gl=KR&ceid=KR:ko",
-        "네이버 교육뉴스":
-            "https://news.naver.com/rss/section_083.xml",
+        "연합뉴스 IT/과학":
+            "https://www.yonhapnews.co.kr/RSS/it.xml",
+        "연합뉴스 사회":
+            "https://www.yonhapnews.co.kr/RSS/society.xml",
+        # ── 나무위키 ────────────────────────────────────────
+        "나무위키 최근변경":
+            "https://namu.wiki/atom",
+        # ── 네이버 뉴스 섹션 ───────────────────────────────
+        "네이버 사회":
+            "https://news.naver.com/rss/section_102.xml",
         "네이버 IT과학":
             "https://news.naver.com/rss/section_105.xml",
+        "네이버 경제":
+            "https://news.naver.com/rss/section_101.xml",
+        "네이버 교육":
+            "https://news.naver.com/rss/section_083.xml",
+        "네이버 세계":
+            "https://news.naver.com/rss/section_104.xml",
+        # ── Google 뉴스 (키워드) ───────────────────────────
+        "Google 뉴스 AI":
+            "https://news.google.com/rss/search?q=인공지능&hl=ko&gl=KR&ceid=KR:ko",
+        "Google 뉴스 교육":
+            "https://news.google.com/rss/search?q=교육&hl=ko&gl=KR&ceid=KR:ko",
+        "Google 뉴스 과학":
+            "https://news.google.com/rss/search?q=과학기술&hl=ko&gl=KR&ceid=KR:ko",
+        "Google 뉴스 사회":
+            "https://news.google.com/rss/search?q=사회&hl=ko&gl=KR&ceid=KR:ko",
+        # ── 위키백과 ────────────────────────────────────────
         "위키백과 최근변경":
             "https://ko.wikipedia.org/w/api.php?action=feedrecentchanges&lang=ko&feedformat=rss",
+        # ── 영어 (글로벌) ──────────────────────────────────
+        "BBC News":
+            "http://feeds.bbci.co.uk/news/rss.xml",
+        "Reuters Top News":
+            "https://feeds.reuters.com/reuters/topNews",
+        "Hacker News":
+            "https://news.ycombinator.com/rss",
+        "MIT Tech Review":
+            "https://www.technologyreview.com/feed/",
     }
 
     def search_google_news(self, keyword: str,
